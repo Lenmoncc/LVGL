@@ -1,0 +1,14 @@
+{
+    "idf.pythonInstallPath": "E:\\esp32\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
+    "files.associations": {
+        "gui_guider.h": "c",
+        "widgets_init.h": "c",
+        "custom.h": "c",
+        "lvgl.h": "c",
+        "stdio.h": "c",
+        "spectrum_1.h": "c",
+        "spectrum_2.h": "c",
+        "lv_indev.h": "c",
+        "lv_indev_gesture.h": "c"
+    }
+}
