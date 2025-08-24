@@ -1,169 +1,69 @@
-/*******************************************************************
- *
- * main.c - LVGL simulator for GNU/Linux
- *
- * Based on the original file from the repository
- *
- * @note eventually this file won't contain a main function and will
- * become a library supporting all major operating systems
- *
- * To see how each driver is initialized check the
- * 'src/lib/display_backends' directory
- *
- * - Clean up
- * - Support for multiple backends at once
- *   2025 EDGEMTech Ltd.
- *
- * Author: EDGEMTech Ltd, Erik Tagirov (erik.tagirov@edgemtech.ch)
- *
- ******************************************************************/
+#include "lvgl/lvgl.h"
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-#include "lvgl/lvgl.h"
-#include "lvgl/demos/lv_demos.h"
-
-#include "src/lib/driver_backends.h"
-#include "src/lib/simulator_util.h"
-#include "src/lib/simulator_settings.h"
-
-// 引入MusicPlayer相关头文件
+/* MusicPlayer UI */
 #include "MusicPlayer/generated/gui_guider.h"
 #include "MusicPlayer/generated/widgets_init.h"
 
-/* Internal functions */
-static void configure_simulator(int argc, char **argv);
-static void print_lvgl_version(void);
-static void print_usage(void);
-
-/* contains the name of the selected backend if user
- * has specified one on the command line */
-static char *selected_backend;
-
-/* Global simulator settings, defined in lv_linux_backend.c */
-extern simulator_settings_t settings;
-
-// 定义UI结构体实例
 lv_ui guider_ui;
 
-
-/**
- * @brief Print LVGL version
- */
-static void print_lvgl_version(void)
+static const char *getenv_default(const char *name, const char *dflt)
 {
-    fprintf(stdout, "%d.%d.%d-%s\n",
-            LVGL_VERSION_MAJOR,
-            LVGL_VERSION_MINOR,
-            LVGL_VERSION_PATCH,
-            LVGL_VERSION_INFO);
+    return getenv(name) ? : dflt;
 }
 
-/**
- * @brief Print usage information
- */
-static void print_usage(void)
+#if LV_USE_LINUX_FBDEV
+static void lv_linux_disp_init(void)
 {
-    fprintf(stdout, "\nlvglsim [-V] [-B] [-b backend_name] [-W window_width] [-H window_height]\n\n");
-    fprintf(stdout, "-V print LVGL version\n");
-    fprintf(stdout, "-B list supported backends\n");
+    const char *device = getenv_default("LV_LINUX_FBDEV_DEVICE", "/dev/fb0");
+    lv_display_t * disp = lv_linux_fbdev_create();
+
+    lv_linux_fbdev_set_file(disp, device);
 }
-
-/**
- * @brief Configure simulator
- * @description process arguments recieved by the program to select
- * appropriate options
- * @param argc the count of arguments in argv
- * @param argv The arguments
- */
-static void configure_simulator(int argc, char **argv)
+#elif LV_USE_LINUX_DRM
+static void lv_linux_disp_init(void)
 {
-    int opt = 0;
+    const char *device = getenv_default("LV_LINUX_DRM_CARD", "/dev/dri/card0");
+    lv_display_t * disp = lv_linux_drm_create();
 
-    selected_backend = NULL;
-    driver_backends_register();
-
-    const char *env_w = getenv("LV_SIM_WINDOW_WIDTH");
-    const char *env_h = getenv("LV_SIM_WINDOW_HEIGHT");
-    /* Default values */
-    settings.window_width = atoi(env_w ? env_w : "800");
-    settings.window_height = atoi(env_h ? env_h : "480");
-
-    /* Parse the command-line options. */
-    while ((opt = getopt (argc, argv, "b:fmW:H:BVh")) != -1) {
-        switch (opt) {
-        case 'h':
-            print_usage();
-            exit(EXIT_SUCCESS);
-            break;
-        case 'V':
-            print_lvgl_version();
-            exit(EXIT_SUCCESS);
-            break;
-        case 'B':
-            driver_backends_print_supported();
-            exit(EXIT_SUCCESS);
-            break;
-        case 'b':
-            if (driver_backends_is_supported(optarg) == 0) {
-                die("error no such backend: %s\n", optarg);
-            }
-            selected_backend = strdup(optarg);
-            break;
-        case 'W':
-            settings.window_width = atoi(optarg);
-            break;
-        case 'H':
-            settings.window_height = atoi(optarg);
-            break;
-        case ':':
-            print_usage();
-            die("Option -%c requires an argument.\n", optopt);
-            break;
-        case '?':
-            print_usage();
-            die("Unknown option -%c.\n", optopt);
-        }
-    }
+    lv_linux_drm_set_file(disp, device, -1);
 }
-
-/**
- * @brief entry point
- * @description start the music player UI
- * @param argc the count of arguments in argv
- * @param argv The arguments
- */
-int main(int argc, char **argv)
+#elif LV_USE_SDL
+static void lv_linux_disp_init(void)
 {
+    const int width = atoi(getenv("LV_SDL_VIDEO_WIDTH") ? : "800");
+    const int height = atoi(getenv("LV_SDL_VIDEO_HEIGHT") ? : "480");
 
-    configure_simulator(argc, argv);
-
-    /* Initialize LVGL. */
-    lv_init();
-
-    /* Initialize the configured backend */
-    if (driver_backends_init_backend(selected_backend) == -1) {
-        die("Failed to initialize display backend");
-    }
-
-    /* Enable for EVDEV support */
-#if LV_USE_EVDEV
-    if (driver_backends_init_backend("EVDEV") == -1) {
-        die("Failed to initialize evdev");
-    }
+    lv_sdl_window_create(width, height);
+}
+#else
+#error Unsupported configuration
 #endif
 
-    /* 初始化并显示MusicPlayer UI */
+int main(void)
+{
+    lv_init();
+
+    /* 初始化显示设备 */
+    lv_linux_disp_init();
+
+    /* 初始化触摸屏输入 */
+    lv_indev_t * indev = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event1");
+    (void) indev;
+
+    /* 初始化并显示 MusicPlayer UI */
     setup_ui(&guider_ui);
+    custom_init(&guider_ui);
 
-    /* Enter the run loop of the selected backend */
-    driver_backends_run_loop();
-
-    // 释放资源（如果有需要）
-    free(selected_backend);
+    /* 主循环 */
+    while(1) {
+        lv_timer_handler();
+        usleep(5000);
+    }
 
     return 0;
 }

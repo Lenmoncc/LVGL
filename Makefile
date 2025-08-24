@@ -34,12 +34,12 @@ CSRCS           := $(shell find src -type f -name '*.c') \
 CXXSRCS         := $(shell find src -type f -name '*.cpp')
 
 
-GENERATED_BASE := $(PRJ_DIR)/MusicPlayer/generated
+GENERATED_BASE := $(PRJ_DIR)/MusicPlayer
 
-include $(GENERATED_BASE)/images/images.mk
-include $(GENERATED_BASE)/guider_fonts/guider_fonts.mk
-include $(GENERATED_BASE)/guider_customer_fonts/guider_customer_fonts.mk
-include $(GENERATED_BASE)/generated.mk
+include $(GENERATED_BASE)/generated/images/images.mk
+include $(GENERATED_BASE)/generated/guider_fonts/guider_fonts.mk
+include $(GENERATED_BASE)/generated/guider_customer_fonts/guider_customer_fonts.mk
+include $(GENERATED_BASE)/generated/generated.mk
 include $(GENERATED_BASE)/custom/custom.mk
 
 # Include LVGL sources
