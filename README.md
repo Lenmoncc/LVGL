@@ -5,7 +5,7 @@
 
 ## UI界面展示
 ### 主界面
-![主界面](LVGL/pictures/1.png)
+![主界面](https://github.com/Lenmoncc/LVGL/blob/main/pictures/1.png)
 ### weather界面
 ![weather](LVGL/pictures/2.png)
 ### photo界面
