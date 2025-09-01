@@ -11,13 +11,16 @@ LVGL_DIR        ?= .
 #LVGL_DIR        ?= /home/test/linux/tools/lv_port_linux-9.2.2/lvgl
 #LVGL_DIR        ?= /home/test/linux/tools/lvgl-9.3.0
 
+MODBUS_INCLUDE  = /home/test/linux/libmodbus/include/modbus/
+MODBUS_LIB      = /home/test/linux/libmodbus/lib/
+
 WARNINGS        :=  -Wall -Wshadow -Wundef -Wmissing-prototypes -Wno-discarded-qualifiers -Wextra -Wno-unused-function -Wno-error=strict-prototypes -Wpointer-arith \
                    -fno-strict-aliasing -Wno-error=cpp -Wuninitialized -Wmaybe-uninitialized -Wno-unused-parameter -Wno-missing-field-initializers -Wtype-limits \
                    -Wsizeof-pointer-memaccess -Wno-format-nonliteral -Wno-cast-qual -Wunreachable-code -Wno-switch-default -Wreturn-type -Wmultichar -Wformat-security \
                    -Wno-ignored-qualifiers -Wno-error=pedantic -Wno-sign-compare -Wno-error=missing-prototypes -Wdouble-promotion -Wclobbered -Wdeprecated -Wempty-body \
                    -Wshift-negative-value -Wstack-usage=2048 -Wno-unused-value -std=gnu99
-CFLAGS          ?= -O3 -g0 -I$(LVGL_DIR) -I./MusicPlayer/generated $(WARNINGS) 
-LDFLAGS         ?= -lm -lpthread -ldl
+CFLAGS          ?= -O3 -g0 -I$(LVGL_DIR)  -I./EnvMonitor/generated $(WARNINGS) -I$(MODBUS_INCLUDE)
+LDFLAGS         ?= -lm -lpthread -ldl -L$(MODBUS_LIB) -lmodbus
 
 BIN             = main
 BUILD_DIR       = ./build
@@ -29,18 +32,19 @@ bindir          ?= $(prefix)/bin
 
 # Collect source files recursively
 CSRCS           := $(shell find src -type f -name '*.c') \
-				   $(shell find MusicPlayer/generated -type f -name '*.c') \
-				   $(shell find MusicPlayer/custom -type f -name '*.c')
+				   $(shell find EnvMonitor/generated -type f -name '*.c') \
+				   $(shell find EnvMonitor/custom -type f -name '*.c')
 CXXSRCS         := $(shell find src -type f -name '*.cpp')
 
 
-GENERATED_BASE := $(PRJ_DIR)/MusicPlayer
+EnvMonitor_BASE := $(PRJ_DIR)/EnvMonitor
 
-include $(GENERATED_BASE)/generated/images/images.mk
-include $(GENERATED_BASE)/generated/guider_fonts/guider_fonts.mk
-include $(GENERATED_BASE)/generated/guider_customer_fonts/guider_customer_fonts.mk
-include $(GENERATED_BASE)/generated/generated.mk
-include $(GENERATED_BASE)/custom/custom.mk
+include $(EnvMonitor_BASE)/generated/images/images.mk
+include $(EnvMonitor_BASE)/generated/guider_fonts/guider_fonts.mk
+include $(EnvMonitor_BASE)/generated/guider_customer_fonts/guider_customer_fonts.mk
+include $(EnvMonitor_BASE)/generated/generated.mk
+include $(EnvMonitor_BASE)/custom/custom.mk
+
 
 # Include LVGL sources
 include $(LVGL_DIR)/lvgl/lvgl.mk

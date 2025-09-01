@@ -6,8 +6,12 @@
 #include <stdlib.h>
 
 /* MusicPlayer UI */
-#include "MusicPlayer/generated/gui_guider.h"
-#include "MusicPlayer/generated/widgets_init.h"
+//#include "MusicPlayer/generated/gui_guider.h"
+//#include "MusicPlayer/generated/widgets_init.h"
+
+/* EnvMonitor UI */
+#include "EnvMonitor/generated/gui_guider.h"
+#include "EnvMonitor/generated/widgets_init.h"
 
 lv_ui guider_ui;
 
@@ -55,7 +59,7 @@ int main(void)
     lv_indev_t * indev = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event1");
     (void) indev;
 
-    /* 初始化并显示 MusicPlayer UI */
+    /* 初始化并显示 EnvMonitor UI */
     setup_ui(&guider_ui);
     custom_init(&guider_ui);
 
