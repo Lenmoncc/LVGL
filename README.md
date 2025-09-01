@@ -7,9 +7,9 @@
 ### 主界面
 ![主界面](https://github.com/Lenmoncc/LVGL/blob/main/pictures/1.png)
 ### weather界面
-![weather](LVGL/pictures/2.png)
+![weather](https://github.com/Lenmoncc/LVGL/blob/main/pictures/2.png)
 ### photo界面
-![photo](LVGL/pictures/3.png)
+![photo](https://github.com/Lenmoncc/LVGL/blob/main/pictures/3.png)
 
 ## 开发环境
 - Gui Guider-1.9.1-GA
