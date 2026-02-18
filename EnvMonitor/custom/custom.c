@@ -13,6 +13,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <string.h>
+#include <time.h>
 #include "lvgl.h"
 #include "custom.h"
 #include "advanced_display.h"
@@ -25,9 +26,14 @@ static void lvgl_update_timer(lv_timer_t *timer);
 static lv_timer_t *update_timer = NULL;
 static pthread_t modbus_thread;
 static volatile int modbus_thread_running = 0;
-static int consecutive_errors = 0;
-static const int MAX_CONSECUTIVE_ERRORS = 5;
-static const int MODBUS_RECONNECT_DELAY = 3;
+
+/* Modbus连接管理参数 */
+static int consecutive_errors = 0;              // 连续读取失败计数
+static const int MAX_CONSECUTIVE_ERRORS = 5;   // 触发重连的最大连续错误次数
+static const int MODBUS_RECONNECT_DELAY = 3;   // 重连延迟时间（秒）
+
+/* 轮询周期配置 */
+static const int MODBUS_POLL_PERIOD_MS = 1000; // 定时轮询周期：1秒
 
 sensor_data_t current_sensor_data = {0};
 sensor_data_t last_display_data = {0};
@@ -186,26 +192,64 @@ void custom_init(lv_ui *ui)
 }
 
 /****************************************************
- *           Modbus连接和重连管理
- ***************************************************/
+ *           Modbus连接和超时重连管理
+ ****************************************************/
+
+/**
+ * @brief Modbus 连接和重连函数
+ *
+ * 功能描述：
+ * 1. 关闭现有的 Modbus 连接（如果存在）
+ * 2. 创建新的 RTU 上下文
+ * 3. 设置从机地址和响应超时
+ * 4. 建立新的连接
+ *
+ * 超时配置：
+ * - modbus_set_response_timeout(ctx, 1, 0)：设置响应超时为 1 秒
+ * - 如果从机在 1 秒内未响应，Modbus 库会自动返回错误
+ * - 这个超时触发后会被上层的"连续错误检测"机制捕获
+ *
+ * 重连机制：
+ * - 当连续读取失败次数达到 MAX_CONSECUTIVE_ERRORS (5次) 时触发
+ * - 重连会在关闭旧连接 3 秒后创建新连接
+ * - 这样可以确保串口完全释放，避免资源泄漏
+ */
 void reconnect_modbus(void)
 {
     if (modbus_ctx) {
         modbus_close(modbus_ctx);
         modbus_free(modbus_ctx);
         modbus_ctx = NULL;
+        fprintf(stderr, "Previous Modbus connection closed\n");
     }
 
+    fprintf(stdout, "Attempting to create new Modbus RTU context...\n");
+
+    /* 创建 RTU 上下文
+     * 参数说明：
+     * - "/dev/ttymxc2"：串口设备路径
+     * - 115200：波特率
+     * - 'N'：奇偶校验（None）
+     * - 8：数据位
+     * - 1：停止位
+     */
     modbus_ctx = modbus_new_rtu("/dev/ttymxc2", 115200, 'N', 8, 1);
     if (!modbus_ctx) {
-        fprintf(stderr, "Unable to create libmodbus context\n");
+        fprintf(stderr, "Unable to create the libmodbus context\n");
         modbus_connection_status = 0;
         return;
     }
 
+    /* 设置从机地址 */
     modbus_set_slave(modbus_ctx, 1);
+
+    /* 设置响应超时为 1 秒（1 秒 0 微秒）
+     * 这是串口级别的超时，如果从机在此时间内未响应，会返回错误
+     * 该错误被轮询线程捕获，连续超时会触发自动重连
+     */
     modbus_set_response_timeout(modbus_ctx, 1, 0);
 
+    /* 尝试建立连接 */
     if (modbus_connect(modbus_ctx) == -1) {
         fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
         modbus_free(modbus_ctx);
@@ -214,16 +258,31 @@ void reconnect_modbus(void)
         return;
     }
 
-    fprintf(stdout, "Connected to Modbus slave\n");
+    fprintf(stdout, "Successfully connected to Modbus slave\n");
     modbus_connection_status = 1;
-    consecutive_errors = 0;
+    consecutive_errors = 0;  /* 重置错误计数 */
 }
 
 /****************************************************
- *                Modbus线程与数据更新
- ***************************************************/
+ *         Modbus线程启动和停止管理
+ ****************************************************/
+
+/**
+ * @brief 启动 Modbus 读取线程
+ *
+ * 功能描述：
+ * 1. 初始化 Modbus 连接
+ * 2. 创建独立的读取线程
+ * 3. 该线程定时轮询从机数据
+ *
+ * 线程生命周期：
+ * - 线程以分离态运行，自动释放资源
+ * - 通过 modbus_thread_running 标志控制
+ * - 由 stop_modbus_thread() 函数关闭
+ */
 void start_modbus_thread(void)
 {
+    /* 首次连接初始化 */
     reconnect_modbus();
 
     if (!modbus_ctx) {
@@ -240,9 +299,23 @@ void start_modbus_thread(void)
         modbus_thread_running = 0;
         return;
     }
+
+    /* 线程分离态运行
+     * 这样线程结束时会自动释放资源，无需 pthread_join
+     */
     pthread_detach(modbus_thread);
+    fprintf(stdout, "Modbus read thread started (1 second poll period)\n");
 }
 
+/**
+ * @brief 停止 Modbus 读取线程
+ *
+ * 功能描述：
+ * 1. 设置停止标志，使轮询线程退出
+ * 2. 发送条件变量信号唤醒可能正在等待的线程
+ * 3. 关闭 Modbus 连接
+ * 4. 释放资源
+ */
 void stop_modbus_thread(void)
 {
     modbus_thread_running = 0;
@@ -254,25 +327,55 @@ void stop_modbus_thread(void)
         modbus_ctx = NULL;
     }
     modbus_connection_status = 0;
+    fprintf(stdout, "Modbus thread stopped\n");
 }
 
+/**
+ * @brief Modbus 主站读取线程
+ *
+ * 功能描述：
+ * 1. 按照 1 秒的固定周期轮询从机数据
+ * 2. 实现串口超时自动重连机制
+ * 3. 数据有效性验证
+ * 4. 条件变量通知 UI 更新
+ *
+ * 工作流程：
+ * - 每 1 秒读取一次寄存器数据（7 个寄存器）
+ * - 读取成功且数据有效则更新共享数据
+ * - 连续失败超过阈值则自动重连串口
+ * - 通过条件变量通知 UI 线程进行更新
+ */
 void *modbus_read_thread(void *arg)
 {
     (void)arg;
     uint16_t tab_reg[7];
     int failure_count = 0;
     const int MAX_READ_FAILURES = 3;
+    struct timespec poll_time;
 
     while (modbus_thread_running) {
+        /* 如果连接未建立，等待 MODBUS_RECONNECT_DELAY 秒后重试 */
         if (!modbus_ctx) {
+            fprintf(stderr, "Modbus context not available, waiting %d seconds before retry\n",
+                    MODBUS_RECONNECT_DELAY);
             sleep(MODBUS_RECONNECT_DELAY);
             continue;
         }
 
+        /* ===== 数据读取阶段 ===== */
+        /* 尝试从从机读取 7 个寄存器：
+         * 寄存器0：AHT10温度
+         * 寄存器1：AHT10湿度
+         * 寄存器2：BH1750光照
+         * 寄存器3：BMP280温度
+         * 寄存器4：BMP280气压
+         * 寄存器5：SGP30 CO2
+         * 寄存器6：SGP30 TVOC
+         */
         int rc = modbus_read_registers(modbus_ctx, 0, 7, tab_reg);
 
         if (rc == 7) {
-            // 创建临时数据结构进行验证
+            /* ===== 数据验证阶段 ===== */
             sensor_data_t new_data;
             new_data.aht10_humi = tab_reg[1];
             new_data.bh1750_light = tab_reg[2];
@@ -281,51 +384,63 @@ void *modbus_read_thread(void *arg)
             new_data.sgp30_co2 = tab_reg[5];
             new_data.sgp30_tvoc = tab_reg[6];
 
-            // 数据验证
+            /* 检查数据是否在有效范围内 */
             if (validate_sensor_data(&new_data)) {
-                // 计算海拔
+                /* 计算海拔高度（基于气压值） */
                 float pressure_ratio = new_data.bmp280_press / 1013.25f;
                 new_data.altitude = (uint16_t)(44330.0f * (1.0f - powf(pressure_ratio, 0.1903f)));
                 new_data.data_valid = true;
 
-                // 原子性更新数据和标志
+                /* ===== 数据更新阶段 ===== */
+                /* 使用互斥锁保护共享数据，确保线程安全 */
                 pthread_mutex_lock(&data_mutex);
                 if (sensor_data_changed(&current_sensor_data, &new_data)) {
                     current_sensor_data = new_data;
                     current_sensor_data.update_count++;
-                    // 通知显示线程有新数据
+                    /* 发送条件变量信号，唤醒等待的 UI 更新线程 */
                     pthread_cond_signal(&data_cond);
                 }
                 pthread_mutex_unlock(&data_mutex);
 
+                /* 读取成功，清除错误计数 */
                 failure_count = 0;
                 consecutive_errors = 0;
                 fprintf(stdout, "Sensor data updated (update_count: %u)\n", new_data.update_count);
             } else {
-                fprintf(stderr, "Received invalid sensor data\n");
+                /* 数据验证失败，记录错误 */
+                fprintf(stderr, "Received invalid sensor data (out of range)\n");
                 failure_count++;
             }
         } else {
+            /* ===== 读取失败处理 ===== */
             fprintf(stderr, "Modbus read failed: %s\n", modbus_strerror(errno));
             failure_count++;
             consecutive_errors++;
         }
 
-        // 如果连续失败过多次，尝试重连
+        /* ===== 超时重连机制 ===== */
+        /* 如果连续读取失败超过阈值，主动断开连接并重连
+         * 这样可以恢复可能卡住的串口状态
+         */
         if (failure_count >= MAX_READ_FAILURES && consecutive_errors >= MAX_CONSECUTIVE_ERRORS) {
-            fprintf(stderr, "Too many read failures, attempting to reconnect...\n");
+            fprintf(stderr, "Too many read failures (%d), attempting to reconnect...\n",
+                    consecutive_errors);
             reconnect_modbus();
             failure_count = 0;
         }
 
-        // 优化：使用条件变量等待或2秒超时以降低CPU占用
-        struct timespec timeout;
-        clock_gettime(CLOCK_REALTIME, &timeout);
-        timeout.tv_sec += 2;
+        /* ===== 轮询周期控制 ===== */
+        /* 使用 clock_nanosleep 实现精确的 1 秒周期轮询
+         * 相比使用 sleep() 或条件变量超时，这种方式更精确
+         * CLOCK_MONOTONIC 不受系统时间调整影响
+         */
+        clock_gettime(CLOCK_MONOTONIC, &poll_time);
+        poll_time.tv_sec += 1;  // 增加 1 秒
 
-        pthread_mutex_lock(&data_mutex);
-        pthread_cond_timedwait(&data_cond, &data_mutex, &timeout);
-        pthread_mutex_unlock(&data_mutex);
+        /* 进行 nanosleep，精确等待直到下一个轮询周期 */
+        while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &poll_time, NULL) == EINTR) {
+            /* 如果被信号中断，继续等待 */
+        }
     }
     return NULL;
 }
